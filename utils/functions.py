@@ -12,6 +12,7 @@ import torch.nn.functional as F
 
 def load_problem(name):
     from problems import TSP, CVRP, SDVRP, OP, PCTSPDet, PCTSPStoch
+    from problems import  MRTA
     problem = {
         'tsp': TSP,
         'cvrp': CVRP,
@@ -19,6 +20,7 @@ def load_problem(name):
         'op': OP,
         'pctsp_det': PCTSPDet,
         'pctsp_stoch': PCTSPStoch,
+        'mrta': MRTA,
     }.get(name, None)
     assert problem is not None, "Currently unsupported problem: {}!".format(name)
     return problem
@@ -185,13 +187,16 @@ def sample_many(inner_func, get_cost_func, input, batch_rep=1, iter_rep=1):
 
     costs = []
     pis = []
+    robot_seq = []
+    tasks_done = None
     for i in range(iter_rep):
-        _log_p, pi = inner_func(input)
+        _log_p, pi, cost, tasks_done, r_seq = inner_func(input)
         # pi.view(-1, batch_rep, pi.size(-1))
         cost, mask = get_cost_func(input, pi)
 
         costs.append(cost.view(batch_rep, -1).t())
         pis.append(pi.view(batch_rep, -1, pi.size(-1)).transpose(0, 1))
+        robot_seq.append(r_seq)
 
     max_length = max(pi.size(-1) for pi in pis)
     # (batch_size * batch_rep, iter_rep, max_length) => (batch_size, batch_rep * iter_rep, max_length)
@@ -206,4 +211,4 @@ def sample_many(inner_func, get_cost_func, input, batch_rep=1, iter_rep=1):
     # (batch_size, minlength)
     minpis = pis[torch.arange(pis.size(0), out=argmincosts.new()), argmincosts]
 
-    return minpis, mincosts
+    return minpis, mincosts, tasks_done, robot_seq

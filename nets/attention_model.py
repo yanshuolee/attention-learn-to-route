@@ -60,6 +60,7 @@ class AttentionModel(nn.Module):
         self.n_encode_layers = n_encode_layers
         self.decode_type = None
         self.temp = 1.0
+        self.is_mrta = problem.NAME == 'mrta'
         self.allow_partial = problem.NAME == 'sdvrp'
         self.is_vrp = problem.NAME == 'cvrp' or problem.NAME == 'sdvrp'
         self.is_orienteering = problem.NAME == 'op'
@@ -74,6 +75,9 @@ class AttentionModel(nn.Module):
         self.n_heads = n_heads
         self.checkpoint_encoder = checkpoint_encoder
         self.shrink_size = shrink_size
+        torch.autograd.set_detect_anomaly(True)
+        self.robots_state_query_embed = nn.Linear(8, embedding_dim)
+        self.robot_taking_decision_query = nn.Linear(8, embedding_dim)
 
         # Problem specific context parameters (placeholder and step context dimension)
         if self.is_vrp or self.is_orienteering or self.is_pctsp:
@@ -90,6 +94,12 @@ class AttentionModel(nn.Module):
             
             if self.is_vrp and self.allow_partial:  # Need to include the demand if split delivery allowed
                 self.project_node_step = nn.Linear(1, 3 * embedding_dim, bias=False)
+        
+        elif self.is_mrta:
+            node_dim = 3
+
+            step_context_dim = embedding_dim + embedding_dim + 1
+
         else:  # TSP
             assert problem.NAME == "tsp", "Unsupported problem: {}".format(problem.NAME)
             step_context_dim = 2 * embedding_dim  # Embedding of first and last node
@@ -100,6 +110,7 @@ class AttentionModel(nn.Module):
             self.W_placeholder.data.uniform_(-1, 1)  # Placeholder should be in range of activations
 
         self.init_embed = nn.Linear(node_dim, embedding_dim)
+        self.init_embed_depot = nn.Linear(7, embedding_dim)
 
         self.embedder = GraphAttentionEncoder(
             n_heads=n_heads,
@@ -112,6 +123,7 @@ class AttentionModel(nn.Module):
         self.project_node_embeddings = nn.Linear(embedding_dim, 3 * embedding_dim, bias=False)
         self.project_fixed_context = nn.Linear(embedding_dim, embedding_dim, bias=False)
         self.project_step_context = nn.Linear(step_context_dim, embedding_dim, bias=False)
+        self.project_context_cur_loc = nn.Linear(2, embedding_dim, bias=False)
         assert embedding_dim % n_heads == 0
         # Note n_heads * val_dim == embedding_dim so input to project_out is embedding_dim
         self.project_out = nn.Linear(embedding_dim, embedding_dim, bias=False)
@@ -218,6 +230,19 @@ class AttentionModel(nn.Module):
                 ),
                 1
             )
+        elif self.is_mrta:
+            features = ('deadline',)
+
+            return torch.cat(
+                (
+                    self.init_embed_depot(input['depot'])[:, None, :],
+                    self.init_embed(torch.cat((
+                        input['loc'],
+                        *(input[feat][:, :, None] for feat in features)
+                    ), -1))
+                ),
+                1
+            )
         # TSP
         return self.init_embed(input)
 
@@ -225,6 +250,7 @@ class AttentionModel(nn.Module):
 
         outputs = []
         sequences = []
+        robot_seq = []
 
         state = self.problem.make_state(input)
 
@@ -235,7 +261,10 @@ class AttentionModel(nn.Module):
 
         # Perform decoding steps
         i = 0
-        while not (self.shrink_size is None and state.all_finished()):
+
+
+        # initial tasks
+        while not (self.shrink_size is None and not (state.all_finished().item() == 0)):
 
             if self.shrink_size is not None:
                 unfinished = torch.nonzero(state.get_finished() == 0)
@@ -255,6 +284,7 @@ class AttentionModel(nn.Module):
             selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
 
             state = state.update(selected)
+            print("Robot task", state.robots_current_destination)
 
             # Now make log_p, selected desired output size by 'unshrinking'
             if self.shrink_size is not None and state.ids.size(0) < batch_size:
@@ -268,11 +298,16 @@ class AttentionModel(nn.Module):
             # Collect output of step
             outputs.append(log_p[:, 0, :])
             sequences.append(selected)
+            robot_seq.append(state.robots_current_destination[0].clone())
 
             i += 1
 
-        # Collected lists, return Tensor
-        return torch.stack(outputs, 1), torch.stack(sequences, 1)
+        cost = (torch.div(state.tasks_finish_time, state.deadline) * (
+                    torch.div(state.tasks_finish_time, state.deadline) > 1).to(torch.int64)).sum(-1)
+
+        return torch.stack(outputs, 1), torch.stack(sequences, 1), cost, state.tasks_done_success.tolist(), torch.stack(robot_seq)
+
+    
 
     def sample_many(self, input, batch_rep=1, iter_rep=1):
         """
@@ -422,6 +457,28 @@ class AttentionModel(nn.Module):
                 ),
                 -1
             )
+        
+        elif self.is_mrta:
+            # Embedding of previous node + remaining capacity
+
+            robots_current_destination = state.robots_current_destination.clone()
+
+            working_robots = ((state.robots_initial_decision_sequence <= (state.n_agents - 1)).to(torch.float)).to(
+                device=robots_current_destination.device)
+
+            current_robot_states = torch.cat(
+                (state.robots_current_destination_location, state.robots_work_capacity[:, :, None]), -1) * working_robots[:,
+                                                                                                        :, None]
+            decision_robot_state = torch.cat((state.robots_current_destination_location[
+                                                state.ids, state.robot_taking_decision].view(batch_size, -1),
+                                            state.robots_work_capacity[state.ids, state.robot_taking_decision]),
+                                            -1)  # add depot info here??
+
+            robots_states_embedding = self.robots_state_query_embed(current_robot_states).sum(-2)
+            decision_robot_state_embedding = self.robot_taking_decision_query(decision_robot_state)
+            return torch.cat((state.next_decision_time[:, :, None], decision_robot_state_embedding[:, None],
+                            robots_states_embedding[:, None]), -1)
+
         else:  # TSP
         
             if num_steps == 1:  # We need to special case if we have only 1 step, may be the first or not

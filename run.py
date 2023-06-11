@@ -3,7 +3,7 @@
 import os
 import json
 import pprint as pp
-
+import time
 import torch
 import torch.optim as optim
 from tensorboard_logger import Logger as TbLogger
@@ -137,7 +137,12 @@ def run(opts):
 
     # Start the actual training loop
     val_dataset = problem.make_dataset(
-        size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, distribution=opts.data_distribution)
+        size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset,
+        initial_size=opts.initial_size,
+        n_depot=opts.n_depot,
+        deadline_min=opts.deadline_min,
+        deadline_max=opts.deadline_max,
+        distribution=opts.data_distribution)
 
     if opts.resume:
         epoch_resume = int(os.path.splitext(os.path.split(opts.resume)[-1])[0].split("-")[1])
@@ -155,6 +160,7 @@ def run(opts):
         validate(model, val_dataset, opts)
     else:
         for epoch in range(opts.epoch_start, opts.epoch_start + opts.n_epochs):
+            start_time = time.time()
             train_epoch(
                 model,
                 optimizer,
@@ -166,6 +172,8 @@ def run(opts):
                 tb_logger,
                 opts
             )
+            total_time = (time.time() - start_time)/60.0
+            print('Epoch: ', epoch, ' time: ', total_time, ' minutes.')
 
 
 if __name__ == "__main__":
