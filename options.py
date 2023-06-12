@@ -10,16 +10,16 @@ def get_options(args=None):
 
     # Data
     parser.add_argument('--problem', default='mrta', help="The problem to solve, default 'tsp'")
-    parser.add_argument('--graph_size', type=int, default=100, help="The size of the problem graph")
+    parser.add_argument('--graph_size', type=int, default=162, help="The size of the problem graph") # 162 / 384 / 750
     parser.add_argument('--initial_size', type=int, default=150, help="The size of the problem graph when the simulation starts")
     parser.add_argument('--batch_size', type=int, default=5, help="Number of instances per batch during training")
     parser.add_argument('--epoch_size', type=int, default=10, help="Number of instances per epoch during training")
-    parser.add_argument('--n_agents', type=int, default=10, help="Number of robots")
+    parser.add_argument('--n_agents', type=int, default=3, help="Number of robots")
     parser.add_argument('--n_depot', type=int, default=1, help="Number of depot")
     parser.add_argument('--agent_max_speed', type=int, default=.01, help="Max speed for the robot")
-    parser.add_argument('--deadline_min', type=int, default=40,
+    parser.add_argument('--deadline_min', type=int, default=600,
                         help="Min value for deadline")
-    parser.add_argument('--deadline_max', type=int, default=550,
+    parser.add_argument('--deadline_max', type=int, default=600,
                         help="Max value for deadline")
     parser.add_argument('--val_size', type=int, default=10,
                         help='Number of instances used for reporting validation performance')

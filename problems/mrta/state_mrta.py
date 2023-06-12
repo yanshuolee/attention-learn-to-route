@@ -80,7 +80,8 @@ class StateMRTA(NamedTuple):
                 lengths=self.lengths[key],
                 cur_coord=self.cur_coord[key],
             )
-        return super(StateMRTA, self).__getitem__(key)
+        # return super(StateMRTA, self).__getitem__(key)
+        return self[key]
 
 
     @staticmethod

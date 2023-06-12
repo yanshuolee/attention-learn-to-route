@@ -96,7 +96,7 @@ class AttentionModel(nn.Module):
                 self.project_node_step = nn.Linear(1, 3 * embedding_dim, bias=False)
         
         elif self.is_mrta:
-            node_dim = 3
+            node_dim = 8
 
             step_context_dim = embedding_dim + embedding_dim + 1
 
@@ -146,9 +146,10 @@ class AttentionModel(nn.Module):
         else:
             embeddings, _ = self.embedder(self._init_embed(input))
 
-        _log_p, pi = self._inner(input, embeddings)
+        _log_p, pi, cost, _, _ = self._inner(input, embeddings)
 
-        cost, mask = self.problem.get_costs(input, pi)
+        # cost, mask = self.problem.get_costs(input, pi)
+        mask = None
         # Log likelyhood is calculated within the model since returning it per action does not work well with
         # DataParallel since sequences can be of different lengths
         ll = self._calc_log_likelihood(_log_p, pi, mask)
@@ -235,11 +236,12 @@ class AttentionModel(nn.Module):
 
             return torch.cat(
                 (
-                    self.init_embed_depot(input['depot'])[:, None, :],
+                    self.init_embed_depot(input['depot']), #[:, None, :], # (5,1,1,128)
                     self.init_embed(torch.cat((
                         input['loc'],
                         *(input[feat][:, :, None] for feat in features)
-                    ), -1))
+                    ), 
+                    -1)) # (5,100,128)
                 ),
                 1
             )
@@ -284,7 +286,7 @@ class AttentionModel(nn.Module):
             selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
 
             state = state.update(selected)
-            print("Robot task", state.robots_current_destination)
+            # print("Robot task", state.robots_current_destination)
 
             # Now make log_p, selected desired output size by 'unshrinking'
             if self.shrink_size is not None and state.ids.size(0) < batch_size:

@@ -153,6 +153,7 @@ class MRTADataset(Dataset):
                 slack_tasks_deadline = slack_tasks * d_high
 
                 deadline_final = normal_dist_tasks_deadline + slack_tasks_deadline
+                deadline_final.fill_(deadline_max) # change deadline values
 
                 robots_start_location = (torch.randint(0, 101, (max_n_agent, 7)).to(torch.float) / 100).to(
                     device=deadline_final.device)
